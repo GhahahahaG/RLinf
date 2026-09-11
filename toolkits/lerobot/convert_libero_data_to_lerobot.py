@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Convert the public LIBERO RLDS demonstrations to StreamingVLA LeRobot data."""
+"""Convert the public LIBERO RLDS demonstrations into a LeRobot dataset.
+
+The result carries the usual images, state, and action deltas, plus the
+``action_states`` field Streaming Flow Policy training needs: the cumulative
+sum of the actions taken before each frame, which is where SFP starts the
+action trajectory for the chunk beginning at that frame.
+"""
 
 from __future__ import annotations
 
@@ -35,7 +41,7 @@ _ACTION_DIM = 7
 
 
 def _compute_action_states(actions: np.ndarray) -> np.ndarray:
-    """Return the cumulative action trajectory at the start of each step."""
+    """Return the cumulative action total reached before each step."""
     actions = np.asarray(actions, dtype=np.float32)
     if actions.ndim != 2 or actions.shape[1] != _ACTION_DIM:
         raise ValueError(
@@ -67,7 +73,7 @@ def _create_dataset(
     image_writer_threads: int,
     image_writer_processes: int,
 ) -> Any:
-    """Create the StreamingVLA LeRobot schema."""
+    """Create an empty LeRobot dataset with the SFP feature schema."""
     lerobot_dataset, _ = _load_lerobot_api()
     return lerobot_dataset.create(
         repo_id=repo_name,
@@ -107,22 +113,33 @@ def _create_dataset(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data-dir", required=True)
-    parser.add_argument("--repo-name", required=True)
+    parser.add_argument(
+        "--data-dir", required=True, help="Directory holding the LIBERO RLDS suites."
+    )
+    parser.add_argument(
+        "--repo-name",
+        required=True,
+        help="LeRobot repo id, relative to HF_LEROBOT_HOME (e.g. local/libero_sfp).",
+    )
     parser.add_argument(
         "--raw-dataset-names",
         nargs="+",
         default=list(_DEFAULT_RAW_DATASET_NAMES),
+        help="RLDS suites to merge into one LeRobot dataset.",
     )
     parser.add_argument("--image-writer-threads", type=int, default=10)
     parser.add_argument("--image-writer-processes", type=int, default=5)
-    parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Delete an existing dataset at the output path before converting.",
+    )
     parser.add_argument("--push-to-hub", action="store_true")
     return parser.parse_args()
 
 
 def main() -> None:
-    """Convert all selected LIBERO suites into one LeRobot dataset."""
+    """Convert the selected LIBERO suites into one LeRobot dataset."""
     args = _parse_args()
     if Path(args.repo_name).is_absolute() or args.repo_name in {"", "."}:
         raise ValueError("repo_name must be a non-empty relative Hugging Face repo id.")
@@ -201,7 +218,7 @@ def main() -> None:
     )
     if args.push_to_hub:
         dataset.push_to_hub(
-            tags=["libero", "panda", "rlds", "streamingvla"],
+            tags=["libero", "panda", "rlds", "sfp"],
             private=False,
             push_videos=True,
             license="apache-2.0",
